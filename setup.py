@@ -8,17 +8,20 @@ import re
 import ast
 import glob
 import shutil
+import sysconfig
 from pathlib import Path
 from packaging.version import parse, Version
 import platform
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
+from setuptools.command.build_ext import build_ext
 import subprocess
 
 import urllib.request
 import urllib.error
 from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
 
+import torch_npu
 import torch
 from torch.utils.cpp_extension import (
     BuildExtension,
@@ -42,13 +45,20 @@ BUILD_TARGET = os.environ.get("BUILD_TARGET", "auto")
 if BUILD_TARGET == "auto":
     if IS_HIP_EXTENSION:
         IS_ROCM = True
+        IS_NPU = False
     else:
         IS_ROCM = False
+        IS_NPU = False
 else:
     if BUILD_TARGET == "cuda":
         IS_ROCM = False
+        IS_NPU = False
     elif BUILD_TARGET == "rocm":
         IS_ROCM = True
+        IS_NPU = False
+    elif BUILD_TARGET == "npu":
+        IS_ROCM = False
+        IS_NPU = True
 
 PACKAGE_NAME = "flash_attn"
 
@@ -204,6 +214,104 @@ def validate_and_update_archs(archs):
         arch in allowed_archs for arch in archs
     ), f"One of GPU archs of {archs} is invalid or not supported by Flash-Attention"
 
+class BishengBuildExt(build_ext):
+    def build_extension(self, ext):
+        BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+        ascend_home = os.getenv("ASCEND_TOOLKIT_HOME", os.getenv("ASCEND_HOME_PATH", "/usr/local/Ascend"))
+        if not os.path.exists(ascend_home):
+            raise RuntimeError(f"昇腾环境未找到！ASCEND_TOOLKIT_HOME={ascend_home}")
+
+        asc_include_paths = [
+            os.path.join(ascend_home, "compiler/tikcpp/include"),
+            os.path.join(ascend_home, "aarch64-linux/tikcpp/include"),
+        ]
+
+        asc_lib_paths = [
+            os.path.join(ascend_home, "compiler/lib64"),
+            os.path.join(ascend_home, "aarch64-linux/lib64"),
+        ]
+
+        asc_config =  {
+            "include_dirs": asc_include_paths,
+            "lib_dirs": asc_lib_paths
+        }
+        print("asc_config",asc_config)
+        python_include = sysconfig.get_config_var("INCLUDEPY")
+        python_lib = sysconfig.get_config_var("LIBDIR")
+
+        # 2. Torch路径（复刻execute_process + find_package(Torch)）
+        torch_cmake_path = torch.utils.cmake_prefix_path
+        torch_include = os.path.join(torch_cmake_path, "Torch/include")
+        torch_lib = os.path.join(torch_cmake_path, "Torch/lib")
+
+        # 3. torch_npu路径（复刻execute_process + set TORCH_NPU_PATH）
+        torch_npu_path = os.path.dirname(torch_npu.__file__)
+        torch_npu_include = os.path.join(torch_npu_path, "include")
+        torch_npu_lib = os.path.join(torch_npu_path, "lib")
+
+        dep_paths = {
+            "python": {"include": python_include, "lib": python_lib},
+            "torch": {"include": torch_include, "lib": torch_lib},
+            "torch_npu": {"include": torch_npu_include, "lib": torch_npu_lib},
+        }
+        print("dep_paths",dep_paths)
+        # 目标输出路径（复刻add_library的输出）
+        ext_fullpath = self.get_ext_fullpath(ext.name)
+        os.makedirs(os.path.dirname(ext_fullpath), exist_ok=True)
+
+        # 构造bisheng编译命令（复刻原CMake所有编译/链接参数）
+        compile_cmd = [
+            "bisheng",  # 用bisheng编译器（替代g++）
+            "-x", "asc",  # 指定语言为ASC（复刻ASC语言编译）
+            "--npu-arch=dav-2201",  # 复刻CMAKE的--npu-arch参数
+            "-shared",  # 编译为共享库（复刻add_library SHARED）
+            "-fPIC",  # 位置无关代码（复刻CMAKE的-fPIC）
+            "-std=c++17",  # C++标准（对齐原CMAKE）
+            "-D_GLIBCXX_USE_CXX11_ABI=0",
+            # 头文件路径（复刻target_include_directories）
+            *[f"-I{p}" for p in asc_config["include_dirs"]],
+            f"-I{dep_paths['python']['include']}",
+            # f"-I{dep_paths['torch']['include']}",
+            f"-I{dep_paths['torch_npu']['include']}",
+            # 库路径（复刻target_link_directories）
+            *[f"-L{p}" for p in asc_config["lib_dirs"]],
+            f"-I{python_lib}/python3.10/site-packages/pybind11/include",
+            f"-I{ascend_home}/include",
+            f"-I{ascend_home}/runtime/include",
+            f"-I{ascend_home}/include/experiment/runtime",
+            f"-I{ascend_home}/include/experiment/msprof",
+            f"-I{python_lib}/python3.10/site-packages/torch/include",
+            f"-I{python_lib}/python3.10/site-packages/torch/include/torch/csrc/api/include",
+            f"-I{BASE_DIR}/csrc/catlass",
+            f"-I{BASE_DIR}n/csrc/catlass/tla",
+            # f"-L{dep_paths['torch']['lib']}",
+            f"-L{dep_paths['torch_npu']['lib']}",
+            f"-L{python_lib}/python3.10/site-packages/torch/lib",
+            f"-L{ascend_home}/lib64",
+            # 链接库（复刻target_link_libraries）
+            "-lascendcl",
+            "-ltorch_npu",
+            # 源文件 + 输出文件
+            *ext.sources,
+            "-o", ext_fullpath,
+        ]
+
+        # 打印编译命令（方便调试）
+        print("=== 执行毕昇编译器命令 ===")
+        print(" ".join(compile_cmd))
+
+        # 执行编译（复刻CMake的build过程）
+        try:
+            result = subprocess.run(
+                compile_cmd,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            print("编译成功！输出：", result.stdout)
+        except subprocess.CalledProcessError as e:
+            print(f"编译失败！错误输出：{e.stderr}")
+            raise e
 
 cmdclass = {}
 ext_modules = []
@@ -220,12 +328,12 @@ else:
             assert (
                 os.path.exists("csrc/composable_kernel/example/ck_tile/01_fmha/generate.py")
             ), "csrc/composable_kernel is missing, please use source distribution or git clone"
-    else:
+    elif not IS_NPU:
         assert (
             os.path.exists("csrc/cutlass/include/cutlass/cutlass.h")
         ), "csrc/cutlass is missing, please use source distribution or git clone"
 
-if not SKIP_CUDA_BUILD and not IS_ROCM:
+if not SKIP_CUDA_BUILD and not IS_ROCM and not IS_NPU:
     print("\n\ntorch.__version__  = {}\n\n".format(torch.__version__))
     TORCH_MAJOR = int(torch.__version__.split(".")[0])
     TORCH_MINOR = int(torch.__version__.split(".")[1])
@@ -486,7 +594,15 @@ elif not SKIP_CUDA_BUILD and IS_ROCM:
                 include_dirs=include_dirs,
             )
         )
+elif not SKIP_CUDA_BUILD and IS_NPU:
+    BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+    source_files = glob.glob(os.path.join(BASE_DIR, "csrc/flash_attn_npu", "*.asc"), recursive=True)
 
+    ext_modules.append(Extension(
+        name="flash_attn_2_cuda",
+        sources=source_files,
+        language="c++",
+    ))
 
 def get_package_version():
     with open(Path(this_dir) / "flash_attn" / "__init__.py", "r") as f:
@@ -511,6 +627,10 @@ def get_wheel_url():
         torch_hip_version = get_hip_version()
         hip_version = f"{torch_hip_version.major}{torch_hip_version.minor}"
         wheel_filename = f"{PACKAGE_NAME}-{flash_version}+rocm{hip_version}torch{torch_version}cxx11abi{cxx11_abi}-{python_version}-{python_version}-{platform_name}.whl"
+    elif IS_NPU:
+        torch_npu_version = parse(torch.__version__)
+        npu_ver_tag = "80"
+        wheel_filename = f"{PACKAGE_NAME}-{flash_version}+npu{npu_ver_tag}torch{torch_version}cxx11abi{cxx11_abi}-{python_version}-{python_version}-{platform_name}.whl"
     else:
         # Determine the version numbers that will be used to determine the correct wheel
         # We're using the CUDA version used to build torch, not the one currently installed
@@ -612,7 +732,7 @@ setup(
         "Operating System :: Unix",
     ],
     ext_modules=ext_modules,
-    cmdclass={"bdist_wheel": CachedWheelsCommand, "build_ext": NinjaBuildExtension}
+    cmdclass={"bdist_wheel": CachedWheelsCommand, "build_ext": NinjaBuildExtension} if not IS_NPU else {"bdist_wheel": CachedWheelsCommand, "build_ext": BishengBuildExt}
     if ext_modules
     else {
         "bdist_wheel": CachedWheelsCommand,
