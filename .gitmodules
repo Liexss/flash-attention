@@ -5,3 +5,7 @@
 	path = csrc/composable_kernel
 	url = https://github.com/ROCm/composable_kernel.git
 	branch = amd-master
+[submodule "csrc/catlass"]
+	path = csrc/catlass
+	url = https://gitcode.com/Liexss/catlass_attention.git
+	branch = pre_launch

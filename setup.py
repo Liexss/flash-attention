@@ -282,8 +282,7 @@ class BishengBuildExt(build_ext):
             f"-I{ascend_home}/include/experiment/msprof",
             f"-I{python_lib}/python3.10/site-packages/torch/include",
             f"-I{python_lib}/python3.10/site-packages/torch/include/torch/csrc/api/include",
-            f"-I{BASE_DIR}/csrc/catlass",
-            f"-I{BASE_DIR}n/csrc/catlass/tla",
+            f"-I{BASE_DIR}/csrc/catlass/include",
             # f"-L{dep_paths['torch']['lib']}",
             f"-L{dep_paths['torch_npu']['lib']}",
             f"-L{python_lib}/python3.10/site-packages/torch/lib",
@@ -322,16 +321,22 @@ if os.path.isdir(".git"):
     if not SKIP_CK_BUILD:
         subprocess.run(["git", "submodule", "update", "--init", "csrc/composable_kernel"], check=True)
         subprocess.run(["git", "submodule", "update", "--init", "csrc/cutlass"], check=True)
+        subprocess.run(["git", "submodule", "update", "--init", "csrc/catlass"], check=True)
 else:
     if IS_ROCM:
         if not SKIP_CK_BUILD:
             assert (
                 os.path.exists("csrc/composable_kernel/example/ck_tile/01_fmha/generate.py")
             ), "csrc/composable_kernel is missing, please use source distribution or git clone"
-    elif not IS_NPU:
+    elif IS_NPU:
+        assert (
+            os.path.exists("csrc/catlass/include/catlass/catlass.hpp")
+        ), "csrc/catlass is missing, please use source distribution or git clone"
+    else:
         assert (
             os.path.exists("csrc/cutlass/include/cutlass/cutlass.h")
         ), "csrc/cutlass is missing, please use source distribution or git clone"
+
 
 if not SKIP_CUDA_BUILD and not IS_ROCM and not IS_NPU:
     print("\n\ntorch.__version__  = {}\n\n".format(torch.__version__))
