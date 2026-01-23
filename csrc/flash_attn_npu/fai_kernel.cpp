@@ -619,3 +619,4 @@ namespace SplitFuse {
         FAInferKernel flashAttnInfer;
         flashAttnInfer(params);
     }
+}
