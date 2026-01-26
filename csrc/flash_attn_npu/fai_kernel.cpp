@@ -152,9 +152,9 @@ namespace SplitFuse {
             nDynNum = L1_MAX_N_NUM % nDynNum != 0 ? RoundDown((nDynNum - 1), NUM_32) : nDynNum;
 
             uint32_t L1_QK_SIZE = BlockMmadQK::L1TileShape::M * kDynNum * sizeof(ElementQ);
-            BlockMmadQK blockMmadQK(resource, nDynNum, kDynNum);
+            BlockMmadQK blockMmadQK(resource, nDynNum, kDynNum, MAX_KV_STACK_LEN);
             uint32_t kPVDynNum = nDynNum * kDynNum / BlockMmadPV::L1TileShape::M;
-            BlockMmadPV blockMmadPV(resource, nDynNum, kPVDynNum, L1_QK_SIZE);
+            BlockMmadPV blockMmadPV(resource, nDynNum, kPVDynNum, MAX_KV_STACK_LEN, L1_QK_SIZE);
 #endif
 #ifdef __DAV_C220_VEC__
             AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(EVENT_ID0);
@@ -200,8 +200,8 @@ namespace SplitFuse {
             uint32_t kvSeqlen = static_cast<uint32_t>(gActualKvseqlen.GetValue(curBatch));
             if constexpr(INPUT_LAYOUT == FaiKenel::inputLayout::TND) {
                 uint32_t prevQSeqlenSum = (curBatch == 0) ?
-                    0 : static_cast<uint32_t>(gActualQseqlen.GetValue(curBatch - 1));
-                qSeqlen = qSeqlen - prevQSeqlenSum;
+                    0 : fATilingData->maxQSeqlen;
+                qSeqlen = fATilingData->maxQSeqlen;
                 if constexpr (!PAGED_CACHE_FLAG) {
                     uint32_t prevKvSeqlenSum = (curBatch == 0) ?
                         0 : static_cast<uint32_t>(gActualKvseqlen.GetValue(curBatch - 1));
@@ -235,7 +235,7 @@ namespace SplitFuse {
                     if constexpr(INPUT_LAYOUT == FaiKenel::inputLayout::TND) {
                         uint32_t prevQSeqlenSum = (curBatch == 0) ?
                             0 : fATilingData->maxQSeqlen;
-                        qSeqlen = qSeqlen - prevQSeqlenSum;
+                        qSeqlen = fATilingData->maxQSeqlen;
                         if constexpr (!PAGED_CACHE_FLAG) {
                             uint32_t prevKvSeqlenSum = (curBatch == 0) ?
                                 0 : static_cast<uint32_t>(gActualKvseqlen.GetValue(curBatch - 1));
@@ -282,26 +282,28 @@ namespace SplitFuse {
                     noSkipKvS = (qSBlockIdx + 1U) * curQSBlockTile + diffS;
                     noSkipKvS = AscendC::Std::min((uint32_t)kvSeqlen, noSkipKvS);
                 }
-                uint32_t kvSLoopNumTotal = CeilDiv(noSkipKvS, pagedBlockSize);
-
-                uint32_t blockStackNum = MAX_KV_STACK_LEN / pagedBlockSize;
-                uint32_t stackSeqTile;
-                uint32_t stackSeqTilePad = blockStackNum * pagedBlockSize;
-                uint32_t preKVNum = PRE_LAUNCH * blockStackNum;
+                uint32_t kvSLoopNumTotal = CeilDiv(noSkipKvS, MAX_KV_STACK_LEN);
+ 	 
+                uint32_t blockStackNum = (MAX_KV_STACK_LEN - 1 + pagedBlockSize) / pagedBlockSize;
+                uint32_t stackSeqTile = MAX_KV_STACK_LEN;
+                uint32_t stackSeqTilePad = MAX_KV_STACK_LEN;
+                uint32_t preKVNum = PRE_LAUNCH;
                 int32_t stackSeqCount = 0;
 
 #ifdef __DAV_C220_CUBE__
                 LayoutQ layoutQTemp(rowNum, embed);
-                LayoutK layoutKTemp(strideK, blockStackNum * pagedBlockSize);
-                LayoutV layoutVTemp(blockStackNum * pagedBlockSize, strideV);
+                LayoutK layoutKTemp(strideK, stackSeqTile);
+                LayoutV layoutVTemp(stackSeqTile, strideV);
+                blockMmadQK.resetBlockStart();
+                blockMmadPV.resetBlockStart();
                 blockMmadQK.loadQGM(gQ[gmOffsetQ], layoutQTemp, rowNum, qNBlockSize, qHeads);
 #endif
-                for (uint32_t kvSIdx = 0; kvSIdx < kvSLoopNumTotal + preKVNum; kvSIdx += blockStackNum) {
+                for (uint32_t kvSIdx = 0; kvSIdx < kvSLoopNumTotal + preKVNum; kvSIdx ++) {
                     if (kvSIdx < kvSLoopNumTotal) {
-                        if (kvSIdx + blockStackNum > kvSLoopNumTotal - 1U) {
-                            stackSeqTile = noSkipKvS - kvSIdx * pagedBlockSize;
+                        if (kvSIdx + 1 > kvSLoopNumTotal - 1U) {
+                            stackSeqTile = noSkipKvS - kvSIdx * MAX_KV_STACK_LEN;
                         } else {
-                            stackSeqTile = pagedBlockSize * blockStackNum;
+                            stackSeqTile = MAX_KV_STACK_LEN;
                         }
                         uint32_t curStackTileMod = stackSeqCount % (PRE_LAUNCH + 1U);
                         uint64_t gmOffsetS =
@@ -349,7 +351,7 @@ namespace SplitFuse {
                         uint32_t triUp = noSkipKvS - qSBlockSize;
                         // causal mask的右下止点
                         uint32_t triDown = noSkipKvS;
-                        uint32_t kvSStartIdx = kvSIdx * pagedBlockSize;
+                        uint32_t kvSStartIdx = kvSIdx * MAX_KV_STACK_LEN;
                         uint32_t kvSEndIdx = kvSStartIdx + stackSeqTile;
                         // 在causal mask场景下，由mask的左上起点判断当前基块是否需要加mask
                         // 如果实际加mask长度只有1，那么相当于不加mask（主对角线需要被计算）
@@ -407,10 +409,11 @@ namespace SplitFuse {
                     }
                     if (kvSIdx >= preKVNum) {
                         uint32_t nowkvSIdx = kvSIdx - preKVNum;
-                        if (nowkvSIdx + blockStackNum > kvSLoopNumTotal - 1U) {
-                            stackSeqTile = noSkipKvS - nowkvSIdx * pagedBlockSize;
-                        } else {
-                            stackSeqTile = pagedBlockSize * blockStackNum;
+                        if (nowkvSIdx + 1 > kvSLoopNumTotal - 1U) {
+                            stackSeqTile = noSkipKvS - nowkvSIdx * MAX_KV_STACK_LEN;
+                        } 
+                        else {
+                            stackSeqTile = MAX_KV_STACK_LEN;
                         }
                         uint32_t curStackTileMod = (stackSeqCount - PRE_LAUNCH) % (PRE_LAUNCH + 1U);
                         uint64_t gmOffsetOTmp =
@@ -480,7 +483,7 @@ namespace SplitFuse {
                             qSBlockSize,
                             qNBlockSize,
                             (stackSeqCount - PRE_LAUNCH == 0),
-                            nowkvSIdx + blockStackNum >= kvSLoopNumTotal,
+                            nowkvSIdx + 1 >= kvSLoopNumTotal,
                             curStackTileMod);
 #endif
                     }
