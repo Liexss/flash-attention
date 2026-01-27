@@ -14,9 +14,16 @@
 #include "catlass/catlass.hpp"
 #include "catlass/debug.hpp"
 #include "catlass/epilogue/block/block_epilogue.hpp"
+#include "block_epilogue_online_softmax_low_prec.hpp"
+#include "block_epilogue_online_softmax_no_mask.hpp"
+#include "block_epilogue_rescale_o_low_prec.hpp"
+#include "block_epilogue_rescale_o_no_split_row.hpp"
 #include "catlass/epilogue/dispatch_policy.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
+#include "block_mmad_fai_pv_normal.hpp"
+#include "block_mmad_fai_qk_normal.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
+#include "fai_block.h"
 #include "catlass/gemm/gemm_type.hpp"
 #include "catlass/layout/layout.hpp"
 
@@ -66,7 +73,7 @@ namespace SplitFuse {
         using ElementUpdate = typename EpilogueRescaleO::ElementUpdate;
         using LayoutUpdate = typename EpilogueRescaleO::LayoutUpdate;
 
-        static constexpr Epilogue::LseMode LSE_MODE = EpilogueRescaleO::LSE_MODE;
+        static constexpr Epilogue::LseModeT LSE_MODE = EpilogueRescaleO::LSE_MODE;
 
         // Methods
         __aicore__ inline
@@ -547,7 +554,7 @@ namespace SplitFuse {
         bool PagedCacheFlag = false,
         FaiKenel::MaskType maskCategory = FaiKenel::MaskType::NO_MASK,
         FaiKenel::inputLayout inLayout = FaiKenel::inputLayout::TND,
-        Epilogue::LseMode lseMode = Epilogue::LseMode::NONE>
+        Epilogue::LseModeT lseMode = Epilogue::LseModeT::NONE>
     __global__ __aicore__ void FAInfer(
         uint64_t fftsAddr,
         GM_ADDR q,
@@ -588,14 +595,14 @@ namespace SplitFuse {
 
         using L1TileShapeQK = GemmShape<Q_TILE_CEIL, 128, 128>;
         using L0TileShapeQK = GemmShape<128, 128, 128>;
-        using DispatchPolicyQK = Gemm::MmadAtlasA2FAIQK<PagedCacheFlag, false>;
+        using DispatchPolicyQK = Gemm::MmadAtlasA2FAIQKT<PagedCacheFlag, false>;
         using QType = Gemm::GemmType<ElementQ, LayoutQ>;
         using KType = Gemm::GemmType<ElementK, LayoutK>;
         using SType = Gemm::GemmType<ElementS, LayoutS>;
         using BlockMmadQK = Gemm::Block::BlockMmad<DispatchPolicyQK, L1TileShapeQK, L0TileShapeQK,
                                                    QType, KType, SType>;
 
-        using DispatchPolicyOnlineSoftmax = Epilogue::EpilogueAtlasA2OnlineSoftmax<lseMode, IntermCalcPrec>;
+        using DispatchPolicyOnlineSoftmax = Epilogue::EpilogueAtlasA2OnlineSoftmaxT<lseMode, IntermCalcPrec>;
         using PType = Gemm::GemmType<ElementP, LayoutP>;
         using maskType = Gemm::GemmType<ElementMask, LayoutMask>;
         using EpilogueOnlineSoftmax =
@@ -603,13 +610,13 @@ namespace SplitFuse {
 
         using L1TileShapePV = GemmShape<128, 128, 256>;
         using L0TileShapePV = GemmShape<128, 128, 128>;
-        using DispatchPolicyPV = Gemm::MmadAtlasA2FAIPV<PagedCacheFlag, false>;
+        using DispatchPolicyPV = Gemm::MmadAtlasA2FAIPVT<PagedCacheFlag, false>;
         using VType = Gemm::GemmType<ElementV, LayoutV>;
         using OTmpType = Gemm::GemmType<ElementOTmp, LayoutOTmp>;
         using BlockMmadPV = Gemm::Block::BlockMmad<DispatchPolicyPV, L1TileShapePV, L0TileShapePV,
                                                    PType, VType, OTmpType>;
 
-        using DispatchPolicyRescaleO = Epilogue::EpilogueAtlasA2RescaleO<lseMode, IntermCalcPrec>;
+        using DispatchPolicyRescaleO = Epilogue::EpilogueAtlasA2RescaleOT<lseMode, IntermCalcPrec>;
         using OType = Gemm::GemmType<ElementO, LayoutO>;
         using OUpdateType = Gemm::GemmType<ElementUpdate, LayoutUpdate>;
         using LseType = Gemm::GemmType<ElementLse, LayoutLse>;
