@@ -8,4 +8,3 @@
 [submodule "csrc/catlass"]
 	path = csrc/catlass
 	url = https://gitcode.com/cann/catlass.git
-	branch = pre_launch
