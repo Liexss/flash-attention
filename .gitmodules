@@ -7,5 +7,5 @@
 	branch = amd-master
 [submodule "csrc/catlass"]
 	path = csrc/catlass
-	url = https://gitcode.com/Liexss/catlass_attention.git
+	url = https://gitcode.com/cann/catlass.git
 	branch = pre_launch
