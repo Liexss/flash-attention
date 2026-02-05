@@ -21,10 +21,7 @@
 #include "catlass/gemm/tile/tile_mmad.hpp"
 #include "fai_block.h"
 
-////////////////////////////////////////////////////////////////////
-
 namespace Catlass::Gemm::Block {
-////////////////////////////////////////////////////////////////////
 
 template <
     bool PAGED_CACHE_FLAG_,
@@ -315,8 +312,6 @@ protected:
     uint32_t maxKVStackLen = 0;
 };
 
-////////////////////////////////////////////////////////////////////
+}
 
-} // namespace Catlass::Gemm::Block
-
-#endif // CATLASS_GEMM_BLOCK_MMAD_PV_HPP
+#endif

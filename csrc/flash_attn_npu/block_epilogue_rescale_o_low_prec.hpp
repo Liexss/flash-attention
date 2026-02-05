@@ -35,7 +35,6 @@ class BlockEpilogue<
     LseType_>
 {
 public:
-    // Type aliases
     using DispatchPolicy = EpilogueAtlasA2RescaleOT<LSE_MODE_, half>;
     using ArchTag = typename DispatchPolicy::ArchTag;
 
@@ -75,7 +74,6 @@ public:
     __aicore__ inline
     BlockEpilogue(Arch::Resource<ArchTag> &resource)
     {
-        // Allocate UB space
         constexpr uint32_t LO_UB_TENSOR_OFFSET = 6 * UB_UINT8_BLOCK_SIZE;
         constexpr uint32_t GO_UB_TENSOR_OFFSET = 8 * UB_UINT8_BLOCK_SIZE;
         constexpr uint32_t TV_UB_TENSOR_OFFSET = 10 * UB_UINT8_BLOCK_SIZE;
@@ -460,6 +458,7 @@ private:
     AscendC::LocalTensor<half> lse16_ubuf_tensor;
     AscendC::LocalTensor<float> lse32_ubuf_tensor;
 };
+
 }
 
-#endif // EPILOGUE_BLOCK_BLOCK_EPILOGUE_RESCALE_LOW_PREC_O_HPP
+#endif

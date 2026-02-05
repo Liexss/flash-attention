@@ -1059,6 +1059,7 @@ private:
     AscendC::LocalTensor<float> tvUbTensor;
     AscendC::LocalTensor<float> glUbTensor;
 };
-} // namespace Catlass::Epilogue::Block
 
-#endif  // CATLASS_EPILOGUE_BLOCK_BLOCK_EPILOGUE_ONLINE_SOFTMAX_NO_MASK_HPP
+}
+
+#endif

@@ -843,6 +843,7 @@ private:
     AscendC::LocalTensor<half> tvUbTensor;
     AscendC::LocalTensor<half> glUbTensor;
 };
+
 }
 
-#endif  // EPILOGUE_BLOCK_BLOCK_EPILOGUE_ONLINE_SOFTMAX_LOW_PREC_HPP
+#endif

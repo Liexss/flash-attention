@@ -25,7 +25,6 @@ struct FAInferTilingData {
     uint64_t padding2;
     uint32_t padding3;
 
-    // Getter functions
     uint32_t get_numHeads() const { return numHeads; }
     uint32_t get_embeddingSize() const { return embeddingSize; }
     uint32_t get_embeddingSizeV() const { return embeddingSizeV; }
@@ -49,7 +48,6 @@ struct FAInferTilingData {
     uint64_t get_padding2() const { return padding2; }
     uint32_t get_padding3() const { return padding3; }
 
-    // Setter functions
     void set_numHeads(uint32_t value) { numHeads = value; }
     void set_embeddingSize(uint32_t value) { embeddingSize = value; }
     void set_embeddingSizeV(uint32_t value) { embeddingSizeV = value; }

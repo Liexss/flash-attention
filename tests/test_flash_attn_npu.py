@@ -7,6 +7,8 @@ from torch_npu.testing.testcase import TestCase, run_tests
 torch.npu.set_device(1)
 sys.path.append(os.getcwd())
 import flash_attn_2_cuda
+from ml_dtypes import bfloat16
+
 
 from flash_attn import (
     flash_attn_with_kvcache,
@@ -109,8 +111,8 @@ def ref_flash_attention(
     value,
     scale,
     mask,
+    data_type,
 ):
-    data_type = np.float16
     inner_prec = 0
     interm_dtype = np.float16 if inner_prec == 1 else np.float32
     query = np.transpose(query, (1, 0, 2))
@@ -134,7 +136,7 @@ def ref_flash_attention(
         sub_mask = None
         if mask is not None:
             print("add mask!")
-            sub_mask = mask[:query.shape[1], kv_start: kv_start + sub_len].astype(interm_dtype) * (-1e4)
+            sub_mask = mask[:query.shape[1], kv_start : kv_start + sub_len].astype(interm_dtype) * (-1e4)
         sub_value = value[:, kv_start: kv_start + sub_len, :]
         qk_result = qkMM1(query, sub_key).astype(interm_dtype)
         qk_result = qk_result * scale
@@ -164,7 +166,7 @@ def ref_flash_attention(
     return go.astype(data_type), lse
 
 def test_fa_custom_ops():
-    cache_mode = 0
+    cache_mode = 1
     q_min_range = -5.0
     q_max_range = 5.0
     kv_min_range = -5.0
@@ -179,19 +181,25 @@ def test_fa_custom_ops():
     block_size = 128
     num_blocks = 64
 
+    data_type = np.float16
+    torch_data_type = torch.float16
+    is_causal = True
+    # data_type = bfloat16
+    # torch_data_type = torch.bfloat16
+
     query = np.random.uniform(q_min_range, q_max_range,
-        size=(batch_size, q_seqlen, num_heads, head_size)).astype(np.float16)
+        size=(batch_size, q_seqlen, num_heads, head_size)).astype(data_type)
     key_cache = None
     value_cache = None
     block_tables = []
     if cache_mode == 1:
         key_cache = np.random.uniform(kv_min_range, kv_max_range,
             size=(num_blocks, block_size,
-            kv_heads, head_size)).astype(np.float16)
+            kv_heads, head_size)).astype(data_type)
 
         value_cache = np.random.uniform(kv_min_range, kv_max_range,
             size=(num_blocks, block_size,
-            kv_heads, head_size)).astype(np.float16)
+            kv_heads, head_size)).astype(data_type)
         max_num_blocks_per_seq = (kv_seqlen + block_size - 1) // block_size
         for i in range(batch_size):
             block_table = [
@@ -199,16 +207,15 @@ def test_fa_custom_ops():
                 for j in range(max_num_blocks_per_seq)
             ]
             block_tables.append(block_table)
-        block_tables = torch.tensor(block_tables, dtype=torch.int64).npu()
+        block_tables = torch.tensor(block_tables, dtype=torch.int32).npu()
     else:
         key_cache = np.random.uniform(kv_min_range, kv_max_range,
-                size=(batch_size, kv_seqlen, kv_heads, head_size)).astype(np.float16)
+                size=(batch_size, kv_seqlen, kv_heads, head_size)).astype(data_type)
         value_cache = np.random.uniform(kv_min_range, kv_max_range,
-            size=(batch_size, kv_seqlen, kv_heads, head_size)).astype(np.float16)
+            size=(batch_size, kv_seqlen, kv_heads, head_size)).astype(data_type)
         block_tables = None
     kv_seqlen_list = [kv_seqlen] * batch_size
     scale = 1.0 / (head_size ** 0.5)
-    is_causal = False
     window_size_left = -1
     window_size_right = -1
     is_rotary_interleaved = False
@@ -223,10 +230,6 @@ def test_fa_custom_ops():
     cache_batch_idx = None
     leftpad_k = None
     alibi_slopes = None
-    # out = torch.zeros((batch_size, q_seqlen, num_heads, head_size), dtype=torch.float16)
-    import pdb;pdb.set_trace()
-    # out_out, softmax_lse = flash_attn_2_cuda.fwd_kvcache(query, key_cache, value_cache, key_cache, value_cache, kv_seqlen_list, rotary_cos, rotary_sin, cache_batch_idx,
-    #                         leftpad_k, block_tables, alibi_slopes, None, scale, is_causal, window_size_left, window_size_right, is_rotary_interleaved, softcap, num_splits)
     out_out = flash_attn_with_kvcache(
         query,
         key_cache,
@@ -240,23 +243,52 @@ def test_fa_custom_ops():
         cache_leftpad=leftpad_k,
         block_table=block_tables,
         causal=is_causal,
-        window_size=[window_size_left,window_size_right],
+        window_size=[window_size_left, window_size_right],
         rotary_interleaved=is_rotary_interleaved,
         alibi_slopes=alibi_slopes,
         num_splits=num_splits,
     )
 
-    golden_out = (torch.empty((batch_size, q_seqlen, num_heads, head_size), dtype=torch.float16))
+    golden_out = (torch.empty((batch_size, q_seqlen, num_heads, head_size), dtype=torch_data_type))
+    atten_mask = None
+    if is_causal:
+        atten_mask = torch.triu(torch.ones(q_seqlen, kv_seqlen), diagonal=1).bool()
+
     for i in range(batch_size):
-        # import pdb;pdb.set_trace()
+        import pdb;pdb.set_trace()
+        key_cache_per_batch = None
+        value_cache_per_batch = None
+        if cache_mode == 1:
+            keys = []
+            values = []
+            block_table = block_tables.cpu().numpy()[i]
+            for j in range(kv_seqlen):
+                block_number = int(block_table[j // block_size])
+                block_offset = j % block_size
+
+                k = key_cache.detach().cpu().numpy()[block_number, block_offset, :, :]
+                k = k.reshape(kv_heads, head_size)
+                keys.append(k)
+
+                v = value_cache.detach().cpu().numpy()[block_number, block_offset, :, :]
+                v = v.reshape(kv_heads, head_size)
+                values.append(v)
+            key_cache_per_batch = np.stack(keys, axis=0)
+            value_cache_per_batch = np.stack(values, axis=0)
+        else:
+            key_cache_per_batch = key_cache.detach().cpu().numpy()[i]
+            value_cache_per_batch = value_cache.detach().cpu().numpy()[i]
+        print(key_cache_per_batch.shape)
+        print(value_cache_per_batch.shape)
         if is_causal:
             print("causal!")
-            output, golden_lse = ref_flash_attention(query.detach().cpu().numpy()[i], key_cache.detach().cpu().numpy()[i], value_cache.detach().cpu().numpy()[i], scale, None)
+            output, golden_lse = ref_flash_attention(query.detach().cpu().numpy()[i], key_cache_per_batch, value_cache_per_batch, scale, atten_mask, data_type)
         else:
-            output, golden_lse = ref_flash_attention(query.detach().cpu().numpy()[i], key_cache.detach().cpu().numpy()[i], value_cache.detach().cpu().numpy()[i], scale, None)
-        # import pdb;pdb.set_trace()
+            output, golden_lse = ref_flash_attention(query.detach().cpu().numpy()[i], key_cache_per_batch, value_cache_per_batch, scale, None, data_type)
         out = output.reshape(q_seqlen, num_heads, head_size)
         golden_out[i:i+1] = torch.from_numpy(out)
+    print(out_out)
+    print(golden_out)
     import pdb;pdb.set_trace()
     print("end")
 

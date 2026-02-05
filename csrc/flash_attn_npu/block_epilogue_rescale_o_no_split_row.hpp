@@ -35,7 +35,6 @@ class BlockEpilogue<
     LseType_>
 {
 public:
-    // Type aliases
     using DispatchPolicy = EpilogueAtlasA2RescaleOT<LSE_MODE_, float>;
     using ArchTag = typename DispatchPolicy::ArchTag;
 
@@ -464,6 +463,7 @@ private:
     AscendC::LocalTensor<float> gmUbTensor;
     AscendC::LocalTensor<float> lse32_ubuf_tensor;
 };
+
 }
 
-#endif // CATLASS_EPILOGUE_BLOCK_BLOCK_EPILOGUE_RESCALE_O_NO_SPLIT_ROW_HPP
+#endif
