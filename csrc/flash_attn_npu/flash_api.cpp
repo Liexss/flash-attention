@@ -86,48 +86,27 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
     }  else {
         out = torch::empty_like(q);
     }
-    // tiling compute
-    std::cout << "paged_KV" << paged_KV << std::endl;
     const auto sizes = q.sizes();
     const int batch_size = sizes[0];
-    std::cout << "batch_size" << batch_size << std::endl;
     int seqlen_q = sizes[1];
-    std::cout << "seqlen_q" << seqlen_q << std::endl;
     int num_heads = sizes[2];
-    std::cout << "num_heads" << num_heads << std::endl;
     const int head_size_og = sizes[3];
-    std::cout << "head_size_og" << head_size_og << std::endl;
     const int max_num_blocks_per_seq = !paged_KV ? 0 : block_table.size(1);
-    std::cout << "max_num_blocks_per_seq" << max_num_blocks_per_seq << std::endl;
     const int num_blocks = !paged_KV ? 0 : kcache.size(0);
-    std::cout << "num_blocks" << num_blocks << std::endl;
     const int page_block_size = !paged_KV ? 128 : kcache.size(1);
-    std::cout << "page_block_size" << page_block_size << std::endl;
     const int num_heads_k = kcache.size(2);
-    std::cout << "num_heads_k" << num_heads_k << std::endl;
     int64_t* seqlens_k_cpu = static_cast<int64_t *>(seqlens_k.data_ptr());
     tiling_cpu_ptr->set_batch(static_cast<uint32_t>(batch_size));
-    std::cout << "get_batch" << tiling_cpu_ptr->get_batch() << std::endl;
     tiling_cpu_ptr->set_numHeads(static_cast<uint32_t>(num_heads));
-    std::cout << "get_numHeads" << tiling_cpu_ptr->get_numHeads() << std::endl;
     tiling_cpu_ptr->set_kvHeads(static_cast<uint32_t>(num_heads_k));
-    std::cout << "get_kvHeads" << tiling_cpu_ptr->get_kvHeads() << std::endl;
     tiling_cpu_ptr->set_embeddingSize(static_cast<uint32_t>(head_size_og));
-    std::cout << "get_embeddingSize" << tiling_cpu_ptr->get_embeddingSize() << std::endl;
     tiling_cpu_ptr->set_embeddingSizeV(static_cast<uint32_t>(head_size_og));
-    std::cout << "get_embeddingSizeV" << tiling_cpu_ptr->get_embeddingSizeV() << std::endl;
     tiling_cpu_ptr->set_numBlocks(static_cast<uint32_t>(num_blocks));
-    std::cout << "get_numBlocks" << tiling_cpu_ptr->get_numBlocks() << std::endl;
     tiling_cpu_ptr->set_blockSize(static_cast<uint32_t>(page_block_size));
-    std::cout << "get_blockSize" << tiling_cpu_ptr->get_blockSize() << std::endl;
     tiling_cpu_ptr->set_maxNumBlocksPerBatch(static_cast<uint32_t>(max_num_blocks_per_seq));
-    std::cout << "get_maxNumBlocksPerBatch" << tiling_cpu_ptr->get_maxNumBlocksPerBatch() << std::endl;
     tiling_cpu_ptr->set_maskType(static_cast<uint32_t>(is_causal));
-    std::cout << "get_maskType" << tiling_cpu_ptr->get_maskType() << std::endl;
     tiling_cpu_ptr->set_scaleValue(softmax_scale);
-    std::cout << "get_scaleValue" << tiling_cpu_ptr->get_scaleValue() << std::endl;
     tiling_cpu_ptr->set_maxQSeqlen(seqlen_q);
-    std::cout << "get_maxQSeqlen" << tiling_cpu_ptr->get_maxQSeqlen() << std::endl;
     uint64_t WORKSPACE_BLOCK_SIZE_DB = 128 * 512;
     uint64_t PRELANCH_NUM = 3;
     uint64_t mm1OutSize = static_cast<uint64_t>(blockDim) * WORKSPACE_BLOCK_SIZE_DB *
@@ -148,18 +127,12 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
     tiling_cpu_ptr->set_mm2OutSize(mm2OutSize);
     tiling_cpu_ptr->set_UpdateSize(UpdateSize);
     tiling_cpu_ptr->set_workSpaceSize(workSpaceSize);
-    std::cout << "get_mm1OutSize" << tiling_cpu_ptr->get_mm1OutSize() << std::endl;
-    std::cout << "get_smOnlineOutSize" << tiling_cpu_ptr->get_smOnlineOutSize() << std::endl;
-    std::cout << "get_mm2OutSize" << tiling_cpu_ptr->get_mm2OutSize() << std::endl;
-    std::cout << "get_UpdateSize" << tiling_cpu_ptr->get_UpdateSize() << std::endl;
-    std::cout << "get_workSpaceSize" << tiling_cpu_ptr->get_workSpaceSize() << std::endl;
 
     uint32_t totalTaskNum = 0;
     uint32_t groupSize = num_heads / num_heads_k;
     for (int32_t batchIdx = 0; batchIdx < batch_size; batchIdx++) {
         uint64_t qSeqlen = seqlen_q;
         uint64_t kvSeqlen = *(seqlens_k_cpu + batchIdx);
-        std::cout << "kvSeqlen" << kvSeqlen << std::endl;
         uint64_t curQNBlockTile = GetQNBlockTile(qSeqlen, groupSize);
         uint64_t qNBlockNumPerGroup = (groupSize + curQNBlockTile - 1) / curQNBlockTile;
         uint64_t curQNBlockNum = qNBlockNumPerGroup * num_heads_k;
@@ -172,9 +145,6 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
         totalTaskNum += curTaskNum;
     }
     tiling_cpu_ptr->set_totalTaskNum(totalTaskNum);
-    std::cout << "get_firstBatchTaskNum" << tiling_cpu_ptr->get_firstBatchTaskNum() << std::endl;
-    std::cout << "get_totalTaskNum" << tiling_cpu_ptr->get_totalTaskNum() << std::endl;
-
     at::Tensor mask_gpu_tensor;
     if (is_causal) {
         at::Tensor mask_cpu_tensor = at::empty({2048, 2048}, at::device(c10::kCPU).dtype(at::kByte));
@@ -231,7 +201,6 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
                         fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, nullptr,
                         qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
             } else {
-                std::cout << "paged_fp16" << std::endl;
                 SplitFuse::FAInfer<half, half, float, true, FaiKenel::MaskType::NO_MASK, FaiKenel::inputLayout::BSND><<<blockDim, nullptr, aclStream>>>(
                         fftsAddr, qDevice, kDevice, vDevice, maskDevice, blockTableDevice, oDevice, nullptr,
                         qSeqDevice, kvSeqDevice, workspaceDevice, tilingDevice);
@@ -253,6 +222,6 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
 
 PYBIND11_MODULE(flash_attn_2_cuda, m)
 {
-    m.doc() = "FlashAttention"; // optional module docstring
+    m.doc() = "FlashAttention";
     m.def("fwd_kvcache", &mha_fwd_kvcache, "Forward pass, with KV-cache");
 }

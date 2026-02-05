@@ -1,27 +1,17 @@
-/**
- * This program is free software, you can redistribute it and/or modify.
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
- * This file is a part of the CANN Open Software.
- * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
- * Please refer to the License for details. You may not use this file except in compliance with the License.
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
- * See LICENSE in the root of the software repository for the full text of the License.
- */
-
 #include "catlass/arch/arch.hpp"
 #include "catlass/arch/cross_core_sync.hpp"
 #include "catlass/arch/resource.hpp"
 #include "catlass/catlass.hpp"
 #include "catlass/debug.hpp"
 #include "catlass/epilogue/block/block_epilogue.hpp"
-#include "block_epilogue_online_softmax_low_prec.hpp"
-#include "block_epilogue_online_softmax_no_mask.hpp"
-#include "block_epilogue_rescale_o_low_prec.hpp"
-#include "block_epilogue_rescale_o_no_split_row.hpp"
+#include "fai_online_softmax_low_prec.hpp"
+#include "fai_online_softmax.hpp"
+#include "fai_rescale_o_low_prec.hpp"
+#include "fai_rescale_o.hpp"
 #include "catlass/epilogue/dispatch_policy.hpp"
 #include "catlass/gemm/block/block_mmad.hpp"
-#include "block_mmad_fai_pv_normal.hpp"
-#include "block_mmad_fai_qk_normal.hpp"
+#include "fai_pv_normal.hpp"
+#include "fai_qk_normal.hpp"
 #include "catlass/gemm/dispatch_policy.hpp"
 #include "fai_block.h"
 #include "catlass/gemm/gemm_type.hpp"

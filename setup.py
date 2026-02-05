@@ -601,7 +601,7 @@ elif not SKIP_CUDA_BUILD and IS_ROCM:
         )
 elif not SKIP_CUDA_BUILD and IS_NPU:
     BASE_DIR = os.path.dirname(os.path.realpath(__file__))
-    source_files = glob.glob(os.path.join(BASE_DIR, "csrc/flash_attn_npu", "*.asc"), recursive=True)
+    source_files = glob.glob(os.path.join(BASE_DIR, "csrc/flash_attn_npu", "flash_api.cpp"), recursive=True)
 
     ext_modules.append(Extension(
         name="flash_attn_2_cuda",
