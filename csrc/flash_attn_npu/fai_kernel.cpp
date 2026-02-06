@@ -344,14 +344,10 @@ namespace SplitFuse {
                         LayoutP layOutP(rowNum, stackSeqTile, stackSeqTilePad);
                         LayoutMask layOutMask(COMP_TRIU_MASK_DIM_LEN, COMP_TRIU_MASK_DIM_LEN);
                         uint64_t gmOffsetP = gmOffsetS;
-                        // causal mask的左上起点
                         uint32_t triUp = noSkipKvS - qSBlockSize;
-                        // causal mask的右下止点
                         uint32_t triDown = noSkipKvS;
                         uint32_t kvSStartIdx = kvSIdx * MAX_KV_STACK_LEN;
                         uint32_t kvSEndIdx = kvSStartIdx + stackSeqTile;
-                        // 在causal mask场景下，由mask的左上起点判断当前基块是否需要加mask
-                        // 如果实际加mask长度只有1，那么相当于不加mask（主对角线需要被计算）
                         bool doTriUMask = triUp < kvSEndIdx - 1;
                         if constexpr (MASK_TYPE == FaiKenel::MaskType::MASK_CAUSAL) {
                             if (doTriUMask) {

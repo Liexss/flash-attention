@@ -8,6 +8,7 @@
 #include "runtime/rt_ffts.h"
 #include "kernel_common.hpp"
 #include "kernel_operator.h"
+#include "tiling/platform/platform_ascendc.h"
 
 uint32_t GetQNBlockTile(uint32_t qSeqlen, uint32_t groupSize)
 {
@@ -52,7 +53,7 @@ mha_fwd_kvcache(at::Tensor &q,                 // batch_size x seqlen_q x num_he
     at::Tensor tiling_cpu_tensor = at::empty({1024}, at::device(c10::kCPU).dtype(at::kByte));
 
     FAInferTilingData* tiling_cpu_ptr = reinterpret_cast<FAInferTilingData*>(tiling_cpu_tensor.data_ptr<uint8_t>());
-    uint32_t blockDim = 20;
+    uint32_t blockDim = platform_ascendc::PlatformAscendCManager::GetInstance()->GetCoreNumAic();
     at::Tensor seqlens_k, block_table, out;
     at::Tensor k, v, rotary_cos, rotary_sin, cache_batch_idx, alibi_slopes;
     bool is_bf16 = q.dtype() == torch::kBFloat16;

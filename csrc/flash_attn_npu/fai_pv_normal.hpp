@@ -104,7 +104,6 @@ public:
         l1KDynamic = kDyn;
     }
 
-    /// Destructor
     __aicore__ inline
     ~BlockMmad() {}
 

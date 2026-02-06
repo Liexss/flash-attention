@@ -290,6 +290,8 @@ class BishengBuildExt(build_ext):
             # 链接库（复刻target_link_libraries）
             "-lascendcl",
             "-ltorch_npu",
+            "-ltiling_api",
+            "-lplatform",
             # 源文件 + 输出文件
             *ext.sources,
             "-o", ext_fullpath,

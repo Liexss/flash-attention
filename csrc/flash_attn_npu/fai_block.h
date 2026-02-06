@@ -9,7 +9,6 @@ using namespace Catlass;
 
 namespace Catlass::Epilogue {
     enum class LseModeT {NONE = 0, OUT_ONLY = 1};
-    // For AtlasA2, FA Infer online Softmax
     template <LseModeT LSE_MODE_, typename SM_DTYPE_>
     struct EpilogueAtlasA2OnlineSoftmaxT {
         using ArchTag = Arch::AtlasA2;

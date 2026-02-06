@@ -233,7 +233,7 @@ public:
         }
 
         if (isLastStackTile) {
-            // *** gl_block = expand_to_block(gl), 存放于 tv
+            // *** gl_block = expand_to_block(gl)
             AscendC::Brcb(
                 tvUbTensor.ReinterpretCast<uint16_t>(),
                 glUbTensor.ReinterpretCast<uint16_t>()[rowOffsetLoop],
@@ -295,7 +295,7 @@ public:
                         AscendC::UnaryRepeatParams(1, 1, 8, 4));
                     AscendC::PipeBarrier<PIPE_V>();
 
-                    // *** lse_block = expand_to_block(lse), 存放于 tv
+                    // *** lse_block = expand_to_block(lse)
                     AscendC::Brcb(
                         tvUbTensor32.ReinterpretCast<uint32_t>(),
                         lse32_ubuf_tensor.ReinterpretCast<uint32_t>(),

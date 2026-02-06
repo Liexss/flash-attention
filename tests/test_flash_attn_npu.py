@@ -2,13 +2,10 @@ import sys
 import os
 import torch
 import torch_npu
-import numpy as np
 from torch_npu.testing.testcase import TestCase, run_tests
 torch.npu.set_device(1)
 sys.path.append(os.getcwd())
 import flash_attn_2_cuda
-from ml_dtypes import bfloat16
-
 
 from flash_attn import (
     flash_attn_with_kvcache,
@@ -19,55 +16,41 @@ def group_matmul(head, kv_head, left, right, high_prec = 1):
     score = None
     for i in range(kv_head):
         if high_prec == 0:
-            group_score = np.matmul(left[i * group_num:(i + 1) * group_num, :, :],
-                                    right[i:(i + 1), :, :]).astype(np.float32)
+            group_score = torch.matmul(left[i * group_num:(i + 1) * group_num, :, :].to(torch.float32),
+                                        right[i:(i + 1), :, :].to(torch.float32)).to(torch.float32)
         else:
-            group_score = np.matmul(left[i * group_num:(i + 1) * group_num, :, :].astype(np.float32),
-                                    right[i:(i + 1), :, :].astype(np.float32))
+            group_score = torch.matmul(left[i * group_num:(i + 1) * group_num, :, :].to(torch.float32),
+                                        right[i:(i + 1), :, :].to(torch.float32))
         if score is None:
             score = group_score
         else:
-            score = np.concatenate((score, group_score), 0)
+            score = torch.cat((score, group_score), 0)
     return score
 
-def softmax_numpy(sim):
-    row_max = np.max(sim, axis=-1, keepdims=True)
-    sim_sub = sim - row_max
-
-    sim_sub = np.exp(sim_sub)
-    row_sum = np.sum(sim_sub, axis=-1, keepdims=True)
-
-    soft_res = sim_sub / row_sum
-    lse = np.squeeze((np.log(row_sum) + row_max), axis=-1)
-
-    return soft_res, lse, row_max
-
-def softmax1(
+def softmax1( 
     qk_result,
     is_first,
     gm,
-    interm_dtype = np.float16
-):
-    sim = qk_result.astype(interm_dtype)
-    lm = np.max(sim, axis=-1, keepdims=True)
+    interm_dtype = torch.float16
+    ):
+    sim = qk_result.to(interm_dtype)
+    lm = torch.max(sim, dim=-1, keepdims=True)[0]
     if is_first:
         hm = lm
         dm = 0
     else:
-        hm = np.maximum(gm, lm)
+        hm = torch.maximum(gm, lm)
         dm = gm - hm
     gm = hm
     sim_sub = sim - hm
-    sim_sub = np.exp(sim_sub.astype(interm_dtype))
-
-    row_sum = np.sum(sim_sub, axis=-1, keepdims=True)
+    sim_sub = torch.exp(sim_sub.to(interm_dtype))
+    row_sum = torch.sum(sim_sub, dim=-1, keepdims=True)
     return sim_sub, row_sum, dm, gm
 
-
-def qkMM1(
+def qkMM1( 
     query,
     key
-):
+    ):
     result = None
     qk_k = key.shape[1]
     qk_k_split = 128
@@ -83,21 +66,18 @@ def qkMM1(
             result = result + result_split
     return result
 
-def pvMM2(
+def pvMM2( 
     p,
     value
-):
+    ):
     result = None
     pv_k = value.shape[1]
     pv_k_split = 128
     pv_k_loop = (pv_k + 127) // 128
     for pv_k_loop_idx in range(pv_k_loop):
         sub_k = 128 if pv_k_loop_idx != (pv_k_loop - 1) else (pv_k - pv_k_loop_idx * 128)
-
         partial_P = p[:, :, pv_k_loop_idx * 128: pv_k_loop_idx * 128 + sub_k]
-        # query_k = query[:, :, pv_k_loop_idx * 128: pv_k_loop_idx * 128 + sub_k]
         partial_Value = value[:, pv_k_loop_idx * 128: pv_k_loop_idx * 128 + sub_k, :] 
-        # key_k = key[:, qk_k_split: qk_k_split + sub_k, :]
         result_split = group_matmul(partial_P.shape[0], partial_Value.shape[0], partial_P, partial_Value, 0)
         if result is None:
             result = result_split
@@ -105,20 +85,21 @@ def pvMM2(
             result = result + result_split
     return result
 
-def ref_flash_attention(
+def ref_flash_attention( 
     query,
     key,
     value,
     scale,
     mask,
     data_type,
-):
+    ):
     inner_prec = 0
-    interm_dtype = np.float16 if inner_prec == 1 else np.float32
-    query = np.transpose(query, (1, 0, 2))
-    key = np.transpose(key, (1, 2, 0))
-    value = np.transpose(value, (1, 0, 2))
-    scale = np.float16(scale) if inner_prec == 1 else np.float32(scale)
+    interm_dtype = torch.float16 if inner_prec == 1 else torch.float32
+    query = query.permute(1, 0, 2)
+    key = key.permute(1, 2, 0)
+    value = value.permute(1, 0, 2)
+    scale = torch.tensor(scale)
+    scale = scale.to(torch.float16) if inner_prec == 1 else scale.to(torch.float32)
     context_len = key.shape[2]
     context_size = 512
     group_num = query.shape[0] // key.shape[0]
@@ -127,7 +108,7 @@ def ref_flash_attention(
     go = None
     go_high = None
     if mask is not None:
-        mask = mask.cpu().numpy()
+        mask = mask.cpu() # 确保mask在cpu上或者与计算设备一致
     for kv_start in range(0, context_len, context_size):
         sub_len = context_size
         if kv_start + context_size > context_len:
@@ -135,43 +116,38 @@ def ref_flash_attention(
         sub_key = key[:, :, kv_start: kv_start + sub_len]
         sub_mask = None
         if mask is not None:
-            print("add mask!")
-            sub_mask = mask[:query.shape[1], kv_start : kv_start + sub_len].astype(interm_dtype) * (-1e4)
+            sub_mask = mask[:query.shape[1], kv_start : kv_start + sub_len].to(interm_dtype) * (-1e4)
         sub_value = value[:, kv_start: kv_start + sub_len, :]
-        qk_result = qkMM1(query, sub_key).astype(interm_dtype)
+        qk_result = qkMM1(query, sub_key).to(interm_dtype)
         qk_result = qk_result * scale
         if mask is not None:
             qk_result += sub_mask
         if kv_start == 0:
             gm = None
         p_result, row_sum, dm, gm = softmax1(qk_result, kv_start == 0, gm, interm_dtype)
-        p_result = p_result.astype(data_type)
+        p_result = p_result.to(data_type)
         if kv_start == 0:
             gm_high = None
-        lo = pvMM2(p_result, sub_value).astype(interm_dtype)
+        lo = pvMM2(p_result, sub_value).to(interm_dtype)
         if kv_start == 0:
             gl = row_sum
             go = lo
         else:
-            dm = np.exp(dm)
+            dm = torch.exp(dm)
             gl = gl * dm
             gl = gl + row_sum
-
             go = go * dm
             go = go + lo
     go = go / gl
-    go = np.transpose(go, (1, 0, 2))
-    lse = np.squeeze((np.log(gl) + gm), axis=-1).astype(np.float32)
-    # lse_high = np.squeeze((np.log(gl_high) + gm_high), axis=-1)
-    return go.astype(data_type), lse
-
+    go = go.permute(1, 0, 2)
+    lse = torch.squeeze((torch.log(gl) + gm), dim=-1).to(torch.float32)
+    return go.to(data_type), lse
 def test_fa_custom_ops():
-    cache_mode = 1
+    cache_mode = 0
     q_min_range = -5.0
     q_max_range = 5.0
     kv_min_range = -5.0
     kv_max_range = 5.0
-
     batch_size = 1
     q_seqlen = 1024
     kv_seqlen = 1024
@@ -180,26 +156,15 @@ def test_fa_custom_ops():
     head_size = 128
     block_size = 128
     num_blocks = 64
-
-    data_type = np.float16
-    torch_data_type = torch.float16
     is_causal = False
-    # data_type = bfloat16
-    # torch_data_type = torch.bfloat16
-
-    query = np.random.uniform(q_min_range, q_max_range,
-        size=(batch_size, q_seqlen, num_heads, head_size)).astype(data_type)
+    data_type = torch.bfloat16
+    query = (q_min_range + (q_max_range - q_min_range) * torch.rand(batch_size, q_seqlen, num_heads, head_size)).to(data_type).npu()
     key_cache = None
     value_cache = None
     block_tables = []
     if cache_mode == 1:
-        key_cache = np.random.uniform(kv_min_range, kv_max_range,
-            size=(num_blocks, block_size,
-            kv_heads, head_size)).astype(data_type)
-
-        value_cache = np.random.uniform(kv_min_range, kv_max_range,
-            size=(num_blocks, block_size,
-            kv_heads, head_size)).astype(data_type)
+        key_cache = (kv_min_range + (kv_max_range - kv_min_range) * torch.rand(num_blocks, block_size, kv_heads, head_size)).to(data_type).npu()
+        value_cache = (kv_min_range + (kv_max_range - kv_min_range) * torch.rand(num_blocks, block_size, kv_heads, head_size)).to(data_type).npu()
         max_num_blocks_per_seq = (kv_seqlen + block_size - 1) // block_size
         for i in range(batch_size):
             block_table = [
@@ -209,10 +174,8 @@ def test_fa_custom_ops():
             block_tables.append(block_table)
         block_tables = torch.tensor(block_tables, dtype=torch.int32).npu()
     else:
-        key_cache = np.random.uniform(kv_min_range, kv_max_range,
-                size=(batch_size, kv_seqlen, kv_heads, head_size)).astype(data_type)
-        value_cache = np.random.uniform(kv_min_range, kv_max_range,
-            size=(batch_size, kv_seqlen, kv_heads, head_size)).astype(data_type)
+        key_cache = (kv_min_range + (kv_max_range - kv_min_range) * torch.rand(batch_size, kv_seqlen, kv_heads, head_size)).to(data_type).npu()
+        value_cache = (kv_min_range + (kv_max_range - kv_min_range) * torch.rand(batch_size, kv_seqlen, kv_heads, head_size)).to(data_type).npu()
         block_tables = None
     kv_seqlen_list = [kv_seqlen] * batch_size
     scale = 1.0 / (head_size ** 0.5)
@@ -221,9 +184,6 @@ def test_fa_custom_ops():
     is_rotary_interleaved = False
     softcap = 0
     num_splits = 0
-    query = torch.from_numpy(query).npu()
-    key_cache = torch.from_numpy(key_cache).npu()
-    value_cache = torch.from_numpy(value_cache).npu()
     kv_seqlen_list = torch.tensor(kv_seqlen_list, dtype=torch.int64).cpu()
     rotary_cos = None
     rotary_sin = None
@@ -250,50 +210,45 @@ def test_fa_custom_ops():
             num_splits=num_splits,
             return_softmax_lse=True
         )
-
-    golden_out = (torch.empty((batch_size, q_seqlen, num_heads, head_size), dtype=torch_data_type))
+    golden_out = (torch.empty((batch_size, q_seqlen, num_heads, head_size), dtype=data_type))
     golden_lseL = (torch.empty((batch_size, q_seqlen, num_heads), dtype=torch.float32))
     atten_mask = None
     if is_causal:
         atten_mask = torch.triu(torch.ones(q_seqlen, kv_seqlen), diagonal=1).bool()
-
     for i in range(batch_size):
         key_cache_per_batch = None
         value_cache_per_batch = None
         if cache_mode == 1:
             keys = []
             values = []
-            block_table = block_tables.cpu().numpy()[i]
+            block_table = block_tables.cpu()[i]
             for j in range(kv_seqlen):
                 block_number = int(block_table[j // block_size])
                 block_offset = j % block_size
-
-                k = key_cache.detach().cpu().numpy()[block_number, block_offset, :, :]
+                k = key_cache.detach().cpu()[block_number, block_offset, :, :]
                 k = k.reshape(kv_heads, head_size)
                 keys.append(k)
-
-                v = value_cache.detach().cpu().numpy()[block_number, block_offset, :, :]
+                v = value_cache.detach().cpu()[block_number, block_offset, :, :]
                 v = v.reshape(kv_heads, head_size)
                 values.append(v)
-            key_cache_per_batch = np.stack(keys, axis=0)
-            value_cache_per_batch = np.stack(values, axis=0)
+            key_cache_per_batch = torch.stack(keys, dim=0)
+            value_cache_per_batch = torch.stack(values, dim=0)
         else:
-            key_cache_per_batch = key_cache.detach().cpu().numpy()[i]
-            value_cache_per_batch = value_cache.detach().cpu().numpy()[i]
+            key_cache_per_batch = key_cache.detach().cpu()[i]
+            value_cache_per_batch = value_cache.detach().cpu()[i]
         print(key_cache_per_batch.shape)
         print(value_cache_per_batch.shape)
+        query_cpu = query.detach().cpu()[i]
         if is_causal:
-            print("causal!")
-            output, golden_lse = ref_flash_attention(query.detach().cpu().numpy()[i], key_cache_per_batch, value_cache_per_batch, scale, atten_mask, data_type)
+            output, golden_lse = ref_flash_attention(query_cpu, key_cache_per_batch, value_cache_per_batch, scale, atten_mask, data_type)
         else:
-            output, golden_lse = ref_flash_attention(query.detach().cpu().numpy()[i], key_cache_per_batch, value_cache_per_batch, scale, None, data_type)
+            output, golden_lse = ref_flash_attention(query_cpu, key_cache_per_batch, value_cache_per_batch, scale, None, data_type)
         out = output.reshape(q_seqlen, num_heads, head_size)
-        golden_out[i:i+1] = torch.from_numpy(out)
-        golden_lseL[i:i+1] = torch.from_numpy(golden_lse.reshape(q_seqlen, num_heads))
+        golden_out[i:i+1] = out
+        golden_lseL[i:i+1] = golden_lse.reshape(q_seqlen, num_heads)
     print(out_out)
     print(golden_out)
     print(softmax_lse)
     print(golden_lseL)
     print("end")
-
 test_fa_custom_ops()
