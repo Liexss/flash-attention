@@ -219,7 +219,7 @@ class BishengBuildExt(build_ext):
         BASE_DIR = os.path.dirname(os.path.realpath(__file__))
         ascend_home = os.getenv("ASCEND_TOOLKIT_HOME", os.getenv("ASCEND_HOME_PATH", "/usr/local/Ascend"))
         if not os.path.exists(ascend_home):
-            raise RuntimeError(f"昇腾环境未找到！ASCEND_TOOLKIT_HOME={ascend_home}")
+            raise RuntimeError(f"ASCEND_TOOLKIT_HOME={ascend_home}")
 
         asc_include_paths = [
             os.path.join(ascend_home, "compiler/tikcpp/include"),
@@ -239,12 +239,10 @@ class BishengBuildExt(build_ext):
         python_include = sysconfig.get_config_var("INCLUDEPY")
         python_lib = sysconfig.get_config_var("LIBDIR")
 
-        # 2. Torch路径（复刻execute_process + find_package(Torch)）
         torch_cmake_path = torch.utils.cmake_prefix_path
         torch_include = os.path.join(torch_cmake_path, "Torch/include")
         torch_lib = os.path.join(torch_cmake_path, "Torch/lib")
 
-        # 3. torch_npu路径（复刻execute_process + set TORCH_NPU_PATH）
         torch_npu_path = os.path.dirname(torch_npu.__file__)
         torch_npu_include = os.path.join(torch_npu_path, "include")
         torch_npu_lib = os.path.join(torch_npu_path, "lib")
@@ -255,25 +253,20 @@ class BishengBuildExt(build_ext):
             "torch_npu": {"include": torch_npu_include, "lib": torch_npu_lib},
         }
         print("dep_paths",dep_paths)
-        # 目标输出路径（复刻add_library的输出）
         ext_fullpath = self.get_ext_fullpath(ext.name)
         os.makedirs(os.path.dirname(ext_fullpath), exist_ok=True)
 
-        # 构造bisheng编译命令（复刻原CMake所有编译/链接参数）
         compile_cmd = [
-            "bisheng",  # 用bisheng编译器（替代g++）
-            "-x", "asc",  # 指定语言为ASC（复刻ASC语言编译）
-            "--npu-arch=dav-2201",  # 复刻CMAKE的--npu-arch参数
-            "-shared",  # 编译为共享库（复刻add_library SHARED）
-            "-fPIC",  # 位置无关代码（复刻CMAKE的-fPIC）
-            "-std=c++17",  # C++标准（对齐原CMAKE）
+            "bisheng",
+            "-x", "asc",
+            "--npu-arch=dav-2201",
+            "-shared",
+            "-fPIC",
+            "-std=c++17",
             "-D_GLIBCXX_USE_CXX11_ABI=0",
-            # 头文件路径（复刻target_include_directories）
             *[f"-I{p}" for p in asc_config["include_dirs"]],
             f"-I{dep_paths['python']['include']}",
-            # f"-I{dep_paths['torch']['include']}",
             f"-I{dep_paths['torch_npu']['include']}",
-            # 库路径（复刻target_link_directories）
             *[f"-L{p}" for p in asc_config["lib_dirs"]],
             f"-I{python_lib}/python3.10/site-packages/pybind11/include",
             f"-I{ascend_home}/include",
@@ -283,25 +276,19 @@ class BishengBuildExt(build_ext):
             f"-I{python_lib}/python3.10/site-packages/torch/include",
             f"-I{python_lib}/python3.10/site-packages/torch/include/torch/csrc/api/include",
             f"-I{BASE_DIR}/csrc/catlass/include",
-            # f"-L{dep_paths['torch']['lib']}",
             f"-L{dep_paths['torch_npu']['lib']}",
             f"-L{python_lib}/python3.10/site-packages/torch/lib",
             f"-L{ascend_home}/lib64",
-            # 链接库（复刻target_link_libraries）
             "-lascendcl",
             "-ltorch_npu",
             "-ltiling_api",
             "-lplatform",
-            # 源文件 + 输出文件
             *ext.sources,
             "-o", ext_fullpath,
         ]
 
-        # 打印编译命令（方便调试）
-        print("=== 执行毕昇编译器命令 ===")
         print(" ".join(compile_cmd))
 
-        # 执行编译（复刻CMake的build过程）
         try:
             result = subprocess.run(
                 compile_cmd,

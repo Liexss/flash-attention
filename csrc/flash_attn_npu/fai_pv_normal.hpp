@@ -82,10 +82,8 @@ public:
     static constexpr uint32_t COORD_DIM1 = 1;
     static constexpr uint32_t COORD_DIM2 = 2;
 
-    // Check LayoutC
     static_assert(std::is_same_v<LayoutC, layout::RowMajor>, "LayoutC only support RowMajor yet!");
 
-    /// Construct
     __aicore__ inline
     BlockMmad(Arch::Resource<ArchTag> &resource,uint32_t nDyn, uint32_t kDyn, uint32_t KVStackLen = 512, uint32_t l1BufAddrStart = 0)
     {
@@ -211,7 +209,6 @@ public:
                 AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CPingPongFlag);
                 for (uint32_t kL1Idx = 0; kL1Idx < kL1Loop; kL1Idx++) {
                     uint32_t kL1Actual = (kL1Idx < kL1Loop - 1U) ? l1KDynamic : (stackSeqTile - kL1Idx * l1KDynamic);
-                    // load P
                     AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1PPingPongFlag);
                     MatrixCoord gmATileCoord{mL1Idx * L1TileShape::M, kL1Idx * l1KDynamic};
                     auto gmTileA = gA[layoutA.GetOffset(gmATileCoord)];
@@ -275,7 +272,6 @@ public:
     }
  
 protected:
-    /// Data members
     AscendC::LocalTensor<ElementA> l1ATensor[STAGES];
     AscendC::LocalTensor<ElementB> l1BTensor;
     AscendC::LocalTensor<ElementA> l0ATensor[STAGES];

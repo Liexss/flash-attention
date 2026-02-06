@@ -283,7 +283,6 @@ public:
     void CopySGmToUb(AscendC::GlobalTensor<half> gInput, uint32_t sUbOffset, uint32_t rowNumCurLoop,
         uint32_t columnNumRound, uint32_t columnNumPad)
     {
-        // input S
         AscendC::DataCopy(
             lsUbTensor,
             gInput,

@@ -65,7 +65,6 @@ namespace SplitFuse {
 
         static constexpr Epilogue::LseModeT LSE_MODE = EpilogueRescaleO::LSE_MODE;
 
-        // Methods
         __aicore__ inline
         FAInferKernel() {}
 
@@ -462,7 +461,6 @@ namespace SplitFuse {
                         uint64_t gmOffsetUpdate = (uint64_t)(coreIdx * WORKSPACE_BLOCK_SIZE_DB);
 
                         Arch::CrossCoreWaitFlag(pvReady);
-                        // rescale O
                         epilogueRescaleO(
                             gO[gmOffsetO],
                             gOTmp[gmOffsetOTmp],

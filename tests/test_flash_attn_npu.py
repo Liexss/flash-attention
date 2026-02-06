@@ -108,7 +108,7 @@ def ref_flash_attention(
     go = None
     go_high = None
     if mask is not None:
-        mask = mask.cpu() # 确保mask在cpu上或者与计算设备一致
+        mask = mask.cpu()
     for kv_start in range(0, context_len, context_size):
         sub_len = context_size
         if kv_start + context_size > context_len:
@@ -142,6 +142,7 @@ def ref_flash_attention(
     go = go.permute(1, 0, 2)
     lse = torch.squeeze((torch.log(gl) + gm), dim=-1).to(torch.float32)
     return go.to(data_type), lse
+
 def test_fa_custom_ops():
     cache_mode = 0
     q_min_range = -5.0
