@@ -183,7 +183,7 @@ def test_fa_custom_ops():
 
     data_type = np.float16
     torch_data_type = torch.float16
-    is_causal = True
+    is_causal = False
     # data_type = bfloat16
     # torch_data_type = torch.bfloat16
 
@@ -230,32 +230,34 @@ def test_fa_custom_ops():
     cache_batch_idx = None
     leftpad_k = None
     alibi_slopes = None
-    out_out = flash_attn_with_kvcache(
-        query,
-        key_cache,
-        value_cache,
-        None,
-        None,
-        rotary_cos=rotary_cos,
-        rotary_sin=rotary_sin,
-        cache_seqlens=kv_seqlen_list,
-        cache_batch_idx=cache_batch_idx,
-        cache_leftpad=leftpad_k,
-        block_table=block_tables,
-        causal=is_causal,
-        window_size=[window_size_left, window_size_right],
-        rotary_interleaved=is_rotary_interleaved,
-        alibi_slopes=alibi_slopes,
-        num_splits=num_splits,
-    )
+    for i in range(100):
+        out_out, softmax_lse = flash_attn_with_kvcache(
+            query,
+            key_cache,
+            value_cache,
+            None,
+            None,
+            rotary_cos=rotary_cos,
+            rotary_sin=rotary_sin,
+            cache_seqlens=kv_seqlen_list,
+            cache_batch_idx=cache_batch_idx,
+            cache_leftpad=leftpad_k,
+            block_table=block_tables,
+            causal=is_causal,
+            window_size=[window_size_left, window_size_right],
+            rotary_interleaved=is_rotary_interleaved,
+            alibi_slopes=alibi_slopes,
+            num_splits=num_splits,
+            return_softmax_lse=True
+        )
 
     golden_out = (torch.empty((batch_size, q_seqlen, num_heads, head_size), dtype=torch_data_type))
+    golden_lseL = (torch.empty((batch_size, q_seqlen, num_heads), dtype=torch.float32))
     atten_mask = None
     if is_causal:
         atten_mask = torch.triu(torch.ones(q_seqlen, kv_seqlen), diagonal=1).bool()
 
     for i in range(batch_size):
-        import pdb;pdb.set_trace()
         key_cache_per_batch = None
         value_cache_per_batch = None
         if cache_mode == 1:
@@ -287,9 +289,11 @@ def test_fa_custom_ops():
             output, golden_lse = ref_flash_attention(query.detach().cpu().numpy()[i], key_cache_per_batch, value_cache_per_batch, scale, None, data_type)
         out = output.reshape(q_seqlen, num_heads, head_size)
         golden_out[i:i+1] = torch.from_numpy(out)
+        golden_lseL[i:i+1] = torch.from_numpy(golden_lse.reshape(q_seqlen, num_heads))
     print(out_out)
     print(golden_out)
-    import pdb;pdb.set_trace()
+    print(softmax_lse)
+    print(golden_lseL)
     print("end")
 
 test_fa_custom_ops()
